@@ -8,9 +8,9 @@
 # as shell function can NOT pass modification back to callee.
 #
 # cover flag (1:no once 2:no all 3:yes once 4:yes all)
-g_cover_flag=4
+g_cover_flag=1
 # size limit flag (1:no once 2:no all 3:yes once 4:yes all)
-g_limit_flag=3
+g_limit_flag=1
 g_size_limit=1 # MB
 
 # $1: dest path
@@ -46,6 +46,7 @@ bsttool_duplicate_dir_warning()
     local resp
     echo -n "dest file/dir exist, do you want to cover it? (n/N/y/Y) "
     read resp
+    #echo "$resp"
     case "$resp" in 
         "n")
             return 1
@@ -345,23 +346,27 @@ bsttool_get_recur ()
 
                 # do NOT rm dirs even if user select cover it !
                 # just merge files into it ..
+                #
+                # if not yes once or all, then nothing to do
+                if [ $g_cover_flag -ne 3 -a $g_cover_flag -ne 4 ]; then 
+                    echo "nothing to do"
+                    continue
+                fi
             else
                 mkdir "$name"
             fi
 
-            if [ $g_cover_flag -eq 3 -o $g_cover_flag -eq 4 ]; then 
-                cd "$name"
-                # do for sub dirs
-                #echo "last char: ${src:0-1}"
-                if [ ${src:0-1} == "/" ]; then 
-                    path="$src$name"
-                else
-                    path="$src/$name"
-                fi
-
-                bsttool_get_recur "$path" "$name" $depth
-                cd ..
+            cd "$name"
+            # do for sub dirs
+            #echo "last char: ${src:0-1}"
+            if [ ${src:0-1} == "/" ]; then 
+                path="$src$name"
+            else
+                path="$src/$name"
             fi
+
+            bsttool_get_recur "$path" "$name" $depth
+            cd ..
         else
             echo -e "$fid:\t$size,\t$name"
             # contains KB?
@@ -396,7 +401,12 @@ bsttool_get_recur ()
             fi
 
             if [ $filesize -gt $g_size_limit ]; then 
-                echo "file too huge"
+                if [ -z "$BST_TOOL_VERBOSE" ]; then 
+                    echo "file too huge: $g_limit_flag"
+                else
+                    echo "file too huge"
+                fi
+
                 if [ $g_limit_flag -eq 1 -o $g_limit_flag -eq 3 ]; then
                     bsttool_huge_file_warning
                     g_limit_flag=$?
@@ -418,7 +428,12 @@ bsttool_get_recur ()
                 fi
 
                 if [ $g_cover_flag -eq 3 -o $g_cover_flag -eq 4 ]; then 
-                    echo "remove old file before download"
+                    if [ -z "$BST_TOOL_VERBOSE" ]; then 
+                        echo "remove old file before download: $g_cover_flag"
+                    else
+                        echo "remove old file before download"
+                    fi
+
                     rm "$name"
                 else
                     # no need to download
@@ -452,7 +467,7 @@ bsttool_get_all ()
     local src=$1
     local dst=""
     local type=0
-    g_cover_flag=4 # yes all
+    g_cover_flag=1 # no once
     local dirold=""
     if [ $# -gt 1 ]; then 
         dst=$2
@@ -516,7 +531,7 @@ bsttool_get_all ()
             ;;
     esac
 
-    g_limit_flag=3 # yes once
+    g_limit_flag=1 # no once
     g_size_limit=$((1024*1024)) # in bytes
     if [ ! -z "$BST_TOOL_GET_HUGE" ]; then 
         g_size_limit=$(($BST_TOOL_GET_HUGE*1024*1024))
