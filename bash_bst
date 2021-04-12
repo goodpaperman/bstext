@@ -1,0 +1,489 @@
+# $1: dest path
+#
+# return value
+# 0: user allow and delete existing remote file
+# 1: user disallow and do nothing
+bsttool_duplicate_warning()
+{
+    local resp
+    echo -n "dest file exist, do you want to cover it?(n/y) "
+    read resp
+    case "$resp" in 
+        "y"|"Y")
+            # remove remote reource first
+            bst_tool delete "$1"
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# return value
+# 0: invalid input
+# 1: no once
+# 2: no all
+# 3: yes once
+# 4: yes all
+bsttool_duplicate_dir_warning()
+{
+    local resp
+    echo -n "dest file/dir exist, do you want to cover it?(n/N/y/Y) "
+    read resp
+    case "$resp" in 
+        "n")
+            return 1
+            ;;
+        "N")
+            return 2
+            ;;
+        "y")
+            return 3
+            ;;
+        "Y")
+            return 4
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+# $1: dest path
+#
+# return value:
+# 0: not exist
+# 1: file exist
+# 2: dir exist but empty
+# 3: dir exist and not empty
+bsttool_query_path()
+{
+    local dst=$1
+    local res=$(bst_tool ls "$dst")
+    local line=$(echo "$res" | sed -n '2p')
+    local str=${line/"total size"//}
+    local download="/tmp/bst.tmp"
+    local ret=0
+    #echo "dst: $dst, res: $res, line: $line, str: $str"
+    if [ "$str" != "$line" ]; then 
+        # normal return
+        ret=$(echo "$line" | awk '{print $NF}')
+        if [ $ret -eq 0 ]; then 
+            ret=2
+        elif [ $ret -gt 1 ]; then 
+            ret=3 # a dir
+        else # size=1
+            # note here we can NOT using type file/dir to determine, 
+            # for example, there is a path /tmp/tmp pointed to a file
+            # when we ls /tmp, it report one item named 'tmp' with type file,
+            # but actually it is a dir.
+            # so here we use another way to determine, that is, download it, 
+            # you can NOT download a dir.
+            echo "dir or file exist, try download to check"
+            rm "$download" > /dev/null 2>&1 # otherwise bst_tool will fail
+            line=$(bst_tool get "$dst" "$download" | sed -n '2p')
+            if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+                echo "download: $line"
+            fi
+
+            #if [[ "$line" =~ "download success" ]]; then # always fail
+            str=${line/"download success"//}
+            if [ "$str" != "$line" ]; then # string replace changed: download success
+                # is a file
+                ret=1
+            else 
+                # is a dir
+                ret=3
+            fi
+        fi
+    else
+        # server response error, no such path
+        if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+            echo "no such path: $dst"
+        fi
+
+        ret=0
+    fi
+
+    if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+        echo "ls=$ret"
+    fi
+
+    return $ret
+}
+
+# $1: local file path
+# $2: remote file path (optional)
+bsttool_replace ()
+{
+    if [ $# -lt 1 ]; then 
+        echo "Usage: bstput src [dst]"
+        return 1
+    fi
+
+    local src=$1
+    local dst="/"
+    if [ $# -gt 1 ]; then 
+        dst=$2
+    fi
+
+    # first check dest existence
+    local resp
+    #local download="/tmp/bst.tmp"
+    local name=${src##*/} # remove path part, want name only
+    if [ -z "$name" ]; then 
+        name=$src
+    fi
+
+    local path=$dst/$name
+    if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+        echo "path=$path"
+    fi
+
+    bsttool_query_path "$dst"
+    local res=$?
+    case $res in
+        0)
+            # not exist
+            echo "dir/file not exist, start uploading"
+            ;;
+        1)
+            # file exist
+            bsttool_duplicate_warning "$dst"
+            if [ $? -ne 0 ]; then 
+                return 1
+            fi
+            ;;
+        2)
+            # empty dir exist
+            echo "dir exist but empty, start uploading"
+            ;;
+        3)
+            # dir exist and not empty
+            # try file again
+            echo "dir exist, try file"
+            bsttool_query_path "$path"
+            res=$?
+            if [ $res -eq 1 ]; then 
+                # dest file exist, warning...
+                bsttool_duplicate_warning "$path"
+                if [ $? -ne 0 ]; then 
+                    return 1
+                fi
+            fi
+            ;;
+        *)
+            echo "should not reach here !!"
+            return 1
+            ;;
+    esac
+
+    #if [ $res -gt 1 ]; then 
+    #    # dir exist and not empty
+    #    # try file again
+    #    echo "dir exist, try file"
+    #    bsttool_query_path "$path"
+    #    res=$?
+    #    if [ $res -gt 0 ]; then 
+    #        # dest file exist, warning...
+    #        bsttool_duplicate_warning "$path"
+    #        if [ $? -ne 0 ]; then 
+    #            return 1
+    #        fi
+    #    fi
+    #elif [ $res -eq 1 ]; then 
+    #    # dir exist or file exist
+    #    echo "dir or file exist, try download and check"
+    #    rm "$download" > /dev/null 2>&1 # otherwise bst_tool will fail
+    #    res=$(bst_tool get "$dst" "$download" | sed -n '2p')
+    #    if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+    #        echo "download: $res"
+    #    fi
+
+    #    #if [[ "$res" =~ "download success" ]]; then # always fail
+    #    resp=${res/"download success"//}
+    #    if [ "$resp" != "$res" ]; then # string replace changed: download success
+    #        # file exist
+    #        bsttool_duplicate_warning "$dst"
+    #        if [ $? -ne 0 ]; then 
+    #            return 1
+    #        fi
+    #    else 
+    #        # try dir/filename
+    #        echo "dest is a dir, check if sub file exist by downloading"
+    #        bsttool_query_path "$path"
+    #        res=$?
+    #        #res=$(bst_tool get "$path" "$download" | sed -n '2p')
+    #        #if [[ "$res" =~ "download success" ]]; then 
+    #        if [ $res -gt 0 ]; then 
+    #            # file (or dir?) exist
+    #            bsttool_duplicate_warning "$path"
+    #            if [ $? -ne 0 ]; then 
+    #                return 1
+    #            fi
+    #        fi
+    #    fi
+    #else
+    #    # dir or file not exist
+    #    echo "dir/file not exist, start uploading"
+    #fi 
+
+    bst_tool put "$src" "$dst"
+    return 0
+}
+
+
+# $1: remote path
+# $2: depth
+bsttool_list_recur ()
+{
+    local dst=$1
+    local depth=$(($2+1))
+    local res=$(bst_tool ls "$dst")
+    local line=$(echo "$res" | sed -n '2p')
+    local str=${line/"total size"//}
+    local ret=0
+    if [ "$str" != "$line" ]; then 
+        # normal return
+        ret=$(echo "$line" | awk '{print $NF}')
+    else
+        # server response error
+        ret=0
+    fi
+
+    # 6: skip header
+    local max=$(($ret + 6 - 1))
+    local fid=""
+    local size="" # has K/M/G postfix
+    local type=""
+    local name=""
+    echo "$dst [$depth-$ret]:"
+    for n in $(seq 6 $max)
+    do
+        # why sed -n "$np" don't work ?
+        line=$(echo "$res" | sed -n "$n"'p')
+        # row: fid, user, size, timestamp, type, name
+        # if size is empty (for dir, all spaces), using 0 instead
+        # do awk twice to remove redundant space
+        eval $(echo "$line" | awk -F'│' '{printf ("%s\t%s\t%s\t%s\n", $2, match($4, /[a-zA-Z0-9.]+/)?$4:"0", $6, $7)}' | awk '{printf ("fid=%s;size=%s;type=%s;name=%s;\n", $1,$2,$3,$4)}')
+        # echo "$line" | awk -F'│' 'BEGIN {print FS} {print NF, $2, $4, $6, $7}'
+        if [ "$type" == "dir" ]; then 
+            #echo -e "$depth:\t$fid,\t$name"
+
+            # do for sub dirs
+            local path=""
+            #echo "last char: ${dst:0-1}"
+            if [ ${dst:0-1} == "/" ]; then 
+                path="$dst$name"
+            else
+                path="$dst/$name"
+            fi
+
+            bsttool_list_recur "$path" $depth
+            #echo ""
+        else
+            #echo -e "$depth:\t$fid,\t$size,\t$name"
+            echo -e "$fid:\t$size,\t$name"
+        fi
+    done
+
+    return 0
+}
+
+# $1: remote path
+bsttool_list_all ()
+{
+    local dst="/"
+    if [ $# -gt 0 ]; then 
+        dst=$1
+    fi
+
+    bsttool_list_recur "$dst" 0 
+}
+
+# $1: remote path
+# $2: local path
+# $3: cover flag (1:no 2:no all 3:yes 4:yes all)
+# $4: depth
+bsttool_get_recur ()
+{
+    local src=$1
+    local dst=$2
+    local cover=$3
+    local depth=$(($4+1))
+
+    local res=$(bst_tool ls "$src")
+    local line=$(echo "$res" | sed -n '2p')
+    local str=${line/"total size"//}
+    local ret=0
+    if [ "$str" != "$line" ]; then 
+        # normal return
+        ret=$(echo "$line" | awk '{print $NF}')
+    else
+        # server response error
+        ret=0
+    fi
+
+    # 6: skip header
+    local max=$(($ret + 6 - 1))
+    local fid=""
+    local size="" # has K/M/G postfix
+    local type=""
+    local name=""
+    local path=""
+    echo "$src [$depth-$ret]:"
+    for n in $(seq 6 $max)
+    do
+        # why sed -n "$np" don't work ?
+        line=$(echo "$res" | sed -n "$n"'p')
+        # row: fid, user, size, timestamp, type, name
+        # if size is empty (for dir, all spaces), using 0 instead
+        # do awk twice to remove redundant space
+        eval $(echo "$line" | awk -F'│' '{printf ("%s\t%s\t%s\t%s\n", $2, match($4, /[a-zA-Z0-9.]+/)?$4:"0", $6, $7)}' | awk '{printf ("fid=%s;size=%s;type=%s;name=%s;\n", $1,$2,$3,$4)}')
+        if [ "$type" == "dir" ]; then 
+            if [ -d "$name" ]; then 
+                echo "dir exist: $name"
+                if [ $cover -eq 1 -o $cover -eq 3 ]; then 
+                    bsttool_duplicate_dir_warning
+                    cover=$?
+                fi
+
+                # do NOT rm dirs even if user select cover it !
+                # just merge files into it ..
+            else
+                mkdir "$name"
+            fi
+
+            if [ $cover -eq 3 -o $cover -eq 4 ]; then 
+                cd "$name"
+                # do for sub dirs
+                #echo "last char: ${src:0-1}"
+                if [ ${src:0-1} == "/" ]; then 
+                    path="$src$name"
+                else
+                    path="$src/$name"
+                fi
+
+                bsttool_get_recur "$path" "$name" $cover $depth
+                cd ..
+            fi
+        else
+            echo -e "$fid:\t$size,\t$name"
+            if [ -f "$name" ]; then 
+                echo "file exist: $name"
+                if [ $cover -eq 1 -o $cover -eq 3 ]; then 
+                    bsttool_duplicate_dir_warning
+                    cover=$?
+                fi
+
+                if [ $cover -eq 3 -o $cover -eq 4 ]; then 
+                    echo "remove old file before download"
+                    rm "$name"
+                fi
+            fi
+
+            if [ $cover -eq 3 -o $cover -eq 4 ]; then 
+                if [ ${src:0-1} == "/" ]; then 
+                    path="$src$name"
+                else
+                    path="$src/$name"
+                fi
+
+                bst_tool get "$path" "$name"
+            fi
+        fi
+    done
+
+    return 0
+}
+
+# $1: remote path
+# $2: local path (optional)
+bsttool_get_all ()
+{
+    if [ $# -lt 1 ]; then 
+        echo "Usage: bstrget src [dst]"
+        return 1
+    fi
+
+    local src=$1
+    local dst=""
+    local type=0
+    local ret=4 # yes all
+    local dirold=""
+    if [ $# -gt 1 ]; then 
+        dst=$2
+    else
+        # get name part
+        local tmp=""
+        if [ ${src:0-1} == "/" ]; then 
+            # cut tailing '/'
+            tmp="${src:0:$((${#src}-1))}"
+        else
+            tmp="$src"
+        fi
+
+        dst="${tmp##*/}"
+    fi
+
+    if [ -z "$dst" -o "$dst" == "/" ]; then 
+        # default name
+        dst="setup"
+    fi
+
+    bsttool_query_path "$src"
+    type=$?
+    case $type in
+        0)
+            # not exist
+            echo "remote src not exist"
+            return 1
+            ;;
+        1)
+            # file exist
+            # do nothing, leave file to bsttool_get_recur
+            ;;
+        2)
+            # empty dir exist
+            echo "nothing to download"
+            return 1
+            ;;
+        3)
+            # dir exist
+            if [ ! -d "$dst" ]; then 
+                mkdir -p "$dst"
+                if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+                    echo "create download dir $dst"
+                fi
+            else
+                bsttool_duplicate_dir_warning
+                ret=$?
+                # invalid or no (all)
+                if [ $ret -eq 0 -o $ret -eq 1 -o $ret -eq 2 ]; then
+                    return 1
+                fi
+            fi
+
+            dirold="$PWD"
+            cd "$dst"
+            ;;
+        *)
+            echo "should not reach here !"
+            return 1
+            ;;
+    esac
+
+    bsttool_get_recur "$src" "$dst" $ret 0
+    if [ ! -z "$dirold" ]; then 
+        cd "$dirold"
+    fi
+}
+
+# alias
+alias bstput=bsttool_replace
+alias bstget='bst_tool get'
+alias bstdel='bst_tool delete'
+alias bstls='bst_tool ls'
+alias bstrls=bsttool_list_all
+alias bstrget=bsttool_get_all
