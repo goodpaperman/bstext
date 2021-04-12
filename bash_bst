@@ -1,3 +1,18 @@
+# bash_bst: bst tool bash extend
+# environment:
+# BST_TOOL_VERBOSE: debug output
+# BST_TOOL_GET_HUGE: bstrget file size limit, if defined, file size large than this will be prompted, default is 1 MB
+
+# global variable
+# we can NOT pass these as recursive function parameters, 
+# as shell function can NOT pass modification back to callee.
+#
+# cover flag (1:no once 2:no all 3:yes once 4:yes all)
+g_cover_flag=4
+# size limit flag (1:no once 2:no all 3:yes once 4:yes all)
+g_limit_flag=3
+g_size_limit=1 # MB
+
 # $1: dest path
 #
 # return value
@@ -6,7 +21,7 @@
 bsttool_duplicate_warning()
 {
     local resp
-    echo -n "dest file exist, do you want to cover it?(n/y) "
+    echo -n "dest file exist, do you want to cover it? (n/y) "
     read resp
     case "$resp" in 
         "y"|"Y")
@@ -29,7 +44,37 @@ bsttool_duplicate_warning()
 bsttool_duplicate_dir_warning()
 {
     local resp
-    echo -n "dest file/dir exist, do you want to cover it?(n/N/y/Y) "
+    echo -n "dest file/dir exist, do you want to cover it? (n/N/y/Y) "
+    read resp
+    case "$resp" in 
+        "n")
+            return 1
+            ;;
+        "N")
+            return 2
+            ;;
+        "y")
+            return 3
+            ;;
+        "Y")
+            return 4
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+# return value
+# 0: invalid input
+# 1: no once
+# 2: no all
+# 3: yes once
+# 4: yes all
+bsttool_huge_file_warning()
+{
+    local resp
+    echo -n "do you want to continue download this large file? (n/N/y/Y) "
     read resp
     case "$resp" in 
         "n")
@@ -179,56 +224,6 @@ bsttool_replace ()
             ;;
     esac
 
-    #if [ $res -gt 1 ]; then 
-    #    # dir exist and not empty
-    #    # try file again
-    #    echo "dir exist, try file"
-    #    bsttool_query_path "$path"
-    #    res=$?
-    #    if [ $res -gt 0 ]; then 
-    #        # dest file exist, warning...
-    #        bsttool_duplicate_warning "$path"
-    #        if [ $? -ne 0 ]; then 
-    #            return 1
-    #        fi
-    #    fi
-    #elif [ $res -eq 1 ]; then 
-    #    # dir exist or file exist
-    #    echo "dir or file exist, try download and check"
-    #    rm "$download" > /dev/null 2>&1 # otherwise bst_tool will fail
-    #    res=$(bst_tool get "$dst" "$download" | sed -n '2p')
-    #    if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
-    #        echo "download: $res"
-    #    fi
-
-    #    #if [[ "$res" =~ "download success" ]]; then # always fail
-    #    resp=${res/"download success"//}
-    #    if [ "$resp" != "$res" ]; then # string replace changed: download success
-    #        # file exist
-    #        bsttool_duplicate_warning "$dst"
-    #        if [ $? -ne 0 ]; then 
-    #            return 1
-    #        fi
-    #    else 
-    #        # try dir/filename
-    #        echo "dest is a dir, check if sub file exist by downloading"
-    #        bsttool_query_path "$path"
-    #        res=$?
-    #        #res=$(bst_tool get "$path" "$download" | sed -n '2p')
-    #        #if [[ "$res" =~ "download success" ]]; then 
-    #        if [ $res -gt 0 ]; then 
-    #            # file (or dir?) exist
-    #            bsttool_duplicate_warning "$path"
-    #            if [ $? -ne 0 ]; then 
-    #                return 1
-    #            fi
-    #        fi
-    #    fi
-    #else
-    #    # dir or file not exist
-    #    echo "dir/file not exist, start uploading"
-    #fi 
-
     bst_tool put "$src" "$dst"
     return 0
 }
@@ -304,14 +299,12 @@ bsttool_list_all ()
 
 # $1: remote path
 # $2: local path
-# $3: cover flag (1:no 2:no all 3:yes 4:yes all)
-# $4: depth
+# $3: depth
 bsttool_get_recur ()
 {
     local src=$1
     local dst=$2
-    local cover=$3
-    local depth=$(($4+1))
+    local depth=$(($3+1))
 
     local res=$(bst_tool ls "$src")
     local line=$(echo "$res" | sed -n '2p')
@@ -332,6 +325,7 @@ bsttool_get_recur ()
     local type=""
     local name=""
     local path=""
+    local filesize=0
     echo "$src [$depth-$ret]:"
     for n in $(seq 6 $max)
     do
@@ -344,9 +338,9 @@ bsttool_get_recur ()
         if [ "$type" == "dir" ]; then 
             if [ -d "$name" ]; then 
                 echo "dir exist: $name"
-                if [ $cover -eq 1 -o $cover -eq 3 ]; then 
+                if [ $g_cover_flag -eq 1 -o $g_cover_flag -eq 3 ]; then 
                     bsttool_duplicate_dir_warning
-                    cover=$?
+                    g_cover_flag=$?
                 fi
 
                 # do NOT rm dirs even if user select cover it !
@@ -355,7 +349,7 @@ bsttool_get_recur ()
                 mkdir "$name"
             fi
 
-            if [ $cover -eq 3 -o $cover -eq 4 ]; then 
+            if [ $g_cover_flag -eq 3 -o $g_cover_flag -eq 4 ]; then 
                 cd "$name"
                 # do for sub dirs
                 #echo "last char: ${src:0-1}"
@@ -365,33 +359,81 @@ bsttool_get_recur ()
                     path="$src/$name"
                 fi
 
-                bsttool_get_recur "$path" "$name" $cover $depth
+                bsttool_get_recur "$path" "$name" $depth
                 cd ..
             fi
         else
             echo -e "$fid:\t$size,\t$name"
+            # contains KB?
+            local kfactor=${size/"KB"//}
+            if [ "$kfactor" != "$size" ]; then
+                kfactor=1024
+            else
+                kfactor=1
+            fi
+
+            # contains MB?
+            local mfactor=${size/"MB"//}
+            if [ "$mfactor" != "$size" ]; then
+                mfactor=$((1024*1024))
+            else
+                mfactor=1
+            fi
+
+            # contains GB?
+            local gfactor=${size/"GB"//}
+            if [ "$gfactor" != "$size" ]; then
+                gfactor=$((1024*1024*1024))
+            else
+                gfactor=1
+            fi
+
+            # should we support TB?
+            #filesize=$(awk -v val="$size" -v k="$kfactor" -v m="$mfactor" -v g="$gfactor" 'BEGIN{ print val; print strtonum(val); printf ("%d", strtonum(val)*k*m*g) }')
+            filesize=$(awk -v val="$size" -v k="$kfactor" -v m="$mfactor" -v g="$gfactor" 'BEGIN{ printf ("%d", strtonum(val)*k*m*g) }')
+            if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+                echo "filesize: $filesize, kfactor: $kfactor, mfactor: $mfactor, gfactor: $gfactor"
+            fi
+
+            if [ $filesize -gt $g_size_limit ]; then 
+                echo "file too huge"
+                if [ $g_limit_flag -eq 1 -o $g_limit_flag -eq 3 ]; then
+                    bsttool_huge_file_warning
+                    g_limit_flag=$?
+                fi
+            
+                # if not yes once or all, then nothing to do
+                if [ $g_limit_flag -ne 3 -a $g_limit_flag -ne 4 ]; then 
+                    # no need to download
+                    echo "nothing to do"
+                    continue
+                fi
+            fi
+
             if [ -f "$name" ]; then 
                 echo "file exist: $name"
-                if [ $cover -eq 1 -o $cover -eq 3 ]; then 
+                if [ $g_cover_flag -eq 1 -o $g_cover_flag -eq 3 ]; then 
                     bsttool_duplicate_dir_warning
-                    cover=$?
+                    g_cover_flag=$?
                 fi
 
-                if [ $cover -eq 3 -o $cover -eq 4 ]; then 
+                if [ $g_cover_flag -eq 3 -o $g_cover_flag -eq 4 ]; then 
                     echo "remove old file before download"
                     rm "$name"
-                fi
-            fi
-
-            if [ $cover -eq 3 -o $cover -eq 4 ]; then 
-                if [ ${src:0-1} == "/" ]; then 
-                    path="$src$name"
                 else
-                    path="$src/$name"
+                    # no need to download
+                    echo "nothing to do"
+                    continue 
                 fi
-
-                bst_tool get "$path" "$name"
             fi
+
+            if [ ${src:0-1} == "/" ]; then 
+                path="$src$name"
+            else
+                path="$src/$name"
+            fi
+
+            bst_tool get "$path" "$name"
         fi
     done
 
@@ -410,7 +452,7 @@ bsttool_get_all ()
     local src=$1
     local dst=""
     local type=0
-    local ret=4 # yes all
+    g_cover_flag=4 # yes all
     local dirold=""
     if [ $# -gt 1 ]; then 
         dst=$2
@@ -458,9 +500,9 @@ bsttool_get_all ()
                 fi
             else
                 bsttool_duplicate_dir_warning
-                ret=$?
+                g_cover_flag=$?
                 # invalid or no (all)
-                if [ $ret -eq 0 -o $ret -eq 1 -o $ret -eq 2 ]; then
+                if [ $g_cover_flag -eq 0 -o $g_cover_flag -eq 1 -o $g_cover_flag -eq 2 ]; then
                     return 1
                 fi
             fi
@@ -474,7 +516,17 @@ bsttool_get_all ()
             ;;
     esac
 
-    bsttool_get_recur "$src" "$dst" $ret 0
+    g_limit_flag=3 # yes once
+    g_size_limit=$((1024*1024)) # in bytes
+    if [ ! -z "$BST_TOOL_GET_HUGE" ]; then 
+        g_size_limit=$(($BST_TOOL_GET_HUGE*1024*1024))
+    fi
+
+    if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
+        echo "size limit: $g_size_limit"
+    fi
+
+    bsttool_get_recur "$src" "$dst" 0
     if [ ! -z "$dirold" ]; then 
         cd "$dirold"
     fi
