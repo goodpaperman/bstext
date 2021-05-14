@@ -179,7 +179,7 @@ bsttool_replace ()
     #local download="/tmp/bst.tmp"
     local name=${src##*/} # remove path part, want name only
     if [ -z "$name" ]; then 
-        name=$src
+        name="$src"
     fi
 
     local path=$dst/$name
@@ -262,7 +262,9 @@ bsttool_list_recur ()
         # row: fid, user, size, timestamp, type, name
         # if size is empty (for dir, all spaces), using 0 instead
         # do awk twice to remove redundant space
-        eval $(echo "$line" | awk -F'│' '{printf ("%s\t%s\t%s\t%s\n", $2, match($4, /[a-zA-Z0-9.]+/)?$4:"0", $6, $7)}' | awk '{printf ("fid=%s;size=%s;type=%s;name=%s;\n", $1,$2,$3,$4)}')
+        #
+        # add quotation for assignment is important, otherwise we will get errors on bracket (etc) in value
+        eval $(echo "$line" | awk -F'│' '{printf ("%s\t%s\t%s\t%s\n", $2, match($4, /[a-zA-Z0-9.]+/)?$4:"0", $6, $7)}' | awk '{printf ("fid=\"%s\";size=\"%s\";type=\"%s\";name=\"%s\";\n", $1,$2,$3,$4)}')
         # echo "$line" | awk -F'│' 'BEGIN {print FS} {print NF, $2, $4, $6, $7}'
         if [ "$type" == "dir" ]; then 
             #echo -e "$depth:\t$fid,\t$name"
