@@ -616,6 +616,8 @@ bsttool_get_all ()
     if [ ! -z "$dirold" ]; then 
         cd "$dirold"
     fi
+
+    return 0
 }
 
 # alias
