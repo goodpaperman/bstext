@@ -472,7 +472,7 @@ bsttool_get_recur ()
             fi
 
             if [ $filesize -gt $g_size_limit ]; then 
-                if [ -z "$BST_TOOL_VERBOSE" ]; then 
+                if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
                     echo "file too huge: $g_limit_flag"
                 else
                     echo "file too huge"
@@ -499,7 +499,7 @@ bsttool_get_recur ()
                 fi
 
                 if [ $g_cover_flag -eq 3 -o $g_cover_flag -eq 4 ]; then 
-                    if [ -z "$BST_TOOL_VERBOSE" ]; then 
+                    if [ ! -z "$BST_TOOL_VERBOSE" ]; then 
                         echo "remove old file before download: $g_cover_flag"
                     else
                         echo "remove old file before download"
