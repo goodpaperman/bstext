@@ -437,16 +437,22 @@ bsttool_get_recur ()
             fi
 
             cd "$name"
-            # do for sub dirs
-            #echo "last char: ${remote:0-1}"
-            if [ ${remote:0-1} == "/" ]; then 
-                path="$remote$name"
-            else
-                path="$remote/$name"
-            fi
+            if [ $? -eq 0 ]; then 
+                # only recursive download when cd success
+                # enterprise netdisk allows dir & file have same name in a subdir
+                # but linux choked on that...
+                #
+                # do for sub dirs
+                #echo "last char: ${remote:0-1}"
+                if [ ${remote:0-1} == "/" ]; then 
+                    path="$remote$name"
+                else
+                    path="$remote/$name"
+                fi
 
-            bsttool_get_recur "$path" "$name" $depth
-            cd ..
+                bsttool_get_recur "$path" "$name" $depth
+                cd ..
+            fi
         else
             echo -e "$fid:\t$size,\t$name"
             # contains KB?
